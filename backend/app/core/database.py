@@ -1,0 +1,15 @@
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+
+class Database:
+    def __init__(self, url: str):
+        self.engine = create_async_engine(url, pool_pre_ping=True, connect_args={"timeout": 5, "command_timeout": 5})
+        self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
+
+    async def ping(self) -> None:
+        async with self.sessions() as session:
+            await session.execute(text("SELECT 1"))
+
+    async def close(self) -> None:
+        await self.engine.dispose()
