@@ -19,6 +19,7 @@ class ScriptGenerationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     topic: str = Field(min_length=3, max_length=240)
+    brief: str | None = Field(default=None, min_length=10, max_length=2000)
     category: ContentCategory = ContentCategory.SOFTWARE
     language: str = Field(default="en", pattern=r"^[a-zA-Z]{2}$")
     target_duration: int = Field(default=45, ge=30, le=60)
@@ -38,6 +39,10 @@ class GeneratedScript(BaseModel):
     @field_validator("hashtags")
     @classmethod
     def validate_hashtags(cls, hashtags: list[str]) -> list[str]:
-        if any(not hashtag.startswith("#") or " " in hashtag for hashtag in hashtags):
-            raise ValueError("hashtags must start with '#' and contain no spaces")
-        return hashtags
+        normalized: list[str] = []
+        for hashtag in hashtags:
+            clean = hashtag.strip().replace(" ", "_")
+            if not clean:
+                raise ValueError("hashtags cannot be empty")
+            normalized.append(clean if clean.startswith("#") else f"#{clean}")
+        return normalized

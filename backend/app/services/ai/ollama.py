@@ -1,4 +1,4 @@
-from typing import Protocol
+from typing import Any, Protocol
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -11,7 +11,7 @@ class AIResult(BaseModel):
 
 
 class AIProvider(Protocol):
-    async def generate(self, prompt: str) -> AIResult: ...
+    async def generate(self, prompt: str, format: str | dict[str, Any] | None = None) -> AIResult: ...
 
 
 class OllamaResponse(BaseModel):
@@ -27,11 +27,14 @@ class OllamaProvider:
     def __init__(self, client: httpx.AsyncClient, model: str):
         self.client, self.model = client, model
 
-    async def generate(self, prompt: str) -> AIResult:
-        response = await self.client.post("/api/generate", json={
+    async def generate(self, prompt: str, format: str | dict[str, Any] | None = None) -> AIResult:
+        payload: dict[str, Any] = {
             "model": self.model, "prompt": prompt, "stream": False,
             "options": {"num_predict": 512},
-        })
+        }
+        if format is not None:
+            payload["format"] = format
+        response = await self.client.post("/api/generate", json=payload)
         response.raise_for_status()
         data = OllamaResponse.model_validate(response.json())
         if not data.done:
