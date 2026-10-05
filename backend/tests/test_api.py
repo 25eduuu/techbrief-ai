@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.core.config import Settings
 from app.main import create_app
 from app.services.ai.ollama import AIResult, OllamaProvider
+from app.services.ai.script_generator import ScriptGenerationError, ScriptGenerator
 
 
 def make_app(limit=6):
@@ -91,3 +92,57 @@ def test_lifespan_cleanup():
     with TestClient(app) as client:
         assert app.state.ai.model == "test-model"
         assert client.get("/openapi.json").status_code == 200
+
+
+def test_script_generation_endpoint():
+    app = make_app()
+    app.state.ai.generate.return_value = AIResult(
+        model="test-model",
+        response='{"hook":"Stop scrolling","body":"Try this tool.","cta":"Follow for more tools.","estimated_duration":30,"visual_suggestions":["Screen recording of the tool"],"caption":"A useful developer tool.","hashtags":["#AI","#developers","#tools"]}',
+    )
+    result = TestClient(app).post("/api/scripts/generate", headers=AUTH, json={
+        "topic": "An AI tool for developers",
+        "category": "AI_TOOLS",
+        "language": "en",
+        "target_duration": 30,
+    })
+    assert result.status_code == 200
+    assert result.json()["estimated_duration"] == 30
+    assert result.json()["hashtags"] == ["#AI", "#developers", "#tools"]
+
+
+def test_script_generator_strips_json_fences():
+    async def run():
+        provider = AsyncMock()
+        provider.generate.return_value = AIResult(
+            model="test-model",
+            response='```json\n{"hook":"Hook","body":"Body","cta":"CTA","estimated_duration":45,"visual_suggestions":["Dashboard"],"caption":"Caption","hashtags":["#one","#two","#three"]}\n```',
+        )
+        from app.schemas.scripts import ScriptGenerationRequest
+        script = await ScriptGenerator(provider).generate(ScriptGenerationRequest(topic="AI tools"))
+        assert script.hook == "Hook"
+
+    asyncio.run(run())
+
+
+def test_script_generator_rejects_invalid_json():
+    async def run():
+        provider = AsyncMock()
+        provider.generate.return_value = AIResult(model="test-model", response="not json")
+        from app.schemas.scripts import ScriptGenerationRequest
+        with pytest.raises(ScriptGenerationError):
+            await ScriptGenerator(provider).generate(ScriptGenerationRequest(topic="AI tools"))
+
+    asyncio.run(run())
+
+
+def test_script_schema_rejects_invalid_hashtags():
+    from pydantic import ValidationError
+    from app.schemas.scripts import GeneratedScript
+
+    with pytest.raises(ValidationError):
+        GeneratedScript(
+            hook="Hook", body="Body", cta="CTA", estimated_duration=45,
+            visual_suggestions=["Dashboard"], caption="Caption",
+            hashtags=["AI", "#two", "#three"],
+        )

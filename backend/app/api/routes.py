@@ -8,6 +8,8 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, ConfigDict, Field
+from app.schemas.scripts import GeneratedScript, ScriptGenerationRequest
+from app.services.ai.script_generator import ScriptGenerationError, ScriptGenerator
 from app.services.ai.ollama import AIResult
 
 router = APIRouter()
@@ -67,4 +69,24 @@ async def test_ai(payload: TestPrompt, request: Request):
             raise HTTPException(503, "Ollama unreachable") from None
         except (httpx.HTTPStatusError, ValueError):
             logger.warning("Ollama generation failed")
+            raise HTTPException(502, "Ollama failed: check server and configured model") from None
+
+
+@router.post("/api/scripts/generate", response_model=GeneratedScript, dependencies=[Depends(authorize)])
+async def generate_script(payload: ScriptGenerationRequest, request: Request):
+    lock = request.app.state.ai_lock
+    if lock.locked():
+        raise HTTPException(429, "AI generation already running")
+    async with lock:
+        try:
+            return await ScriptGenerator(request.app.state.ai).generate(payload)
+        except httpx.TimeoutException:
+            raise HTTPException(504, "Ollama timed out") from None
+        except httpx.RequestError:
+            raise HTTPException(503, "Ollama unreachable") from None
+        except ScriptGenerationError:
+            logger.warning("Ollama returned invalid script JSON")
+            raise HTTPException(502, "Ollama returned an invalid script") from None
+        except httpx.HTTPStatusError:
+            logger.warning("Ollama script generation failed")
             raise HTTPException(502, "Ollama failed: check server and configured model") from None
